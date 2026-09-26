@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Software Engineering Copilot — Dual-Mode Workspace</title>
+    
+    <!-- Modern Styling -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    
+    <!-- Marked.js CDN for Markdown Parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <!-- Highlight.js CDN for Code Syntax Highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</head>
+<body class="dark-theme">
+
+    <!-- Top Navigation Bar -->
+    <header class="app-header">
+        <div class="header-left">
+            <button id="sidebarToggleBtn" class="sidebar-toggle-btn" title="Toggle Navigation Sidebar">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
+            <div class="brand">
+                <div class="brand-logo-wrapper">
+                    <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                        <polyline points="2 17 12 22 22 17"></polyline>
+                        <polyline points="2 12 12 17 22 12"></polyline>
+                    </svg>
+                </div>
+                <div class="brand-text">
+                    <span class="brand-title">AI Software Engineering Copilot</span>
+                    <span class="brand-tag">Dual-Mode Workspace</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="header-center">
+            <div class="repo-selector-pill">
+                <span class="pill-label">Repository</span>
+                <span id="repoNameBadge" class="repo-badge">Loading repo...</span>
+                <select id="repoSelect" class="repo-select" title="Switch active repository" style="display: none;"></select>
+            </div>
+            <div class="status-pill">
+                <span class="status-dot"></span>
+                <span id="engineStatusBadge" class="status-text">Ready</span>
+            </div>
+        </div>
+
+        <div class="header-right">
+            <label for="repoZipInput" class="upload-btn" title="Upload a Python repository (.zip archive)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <span>+ Upload Repo</span>
+                <input type="file" id="repoZipInput" accept=".zip" style="display: none;">
+            </label>
+        </div>
+    </header>
+
+    <!-- Main IDE Workspace Shell -->
+    <div class="app-shell">
+
+        <!-- Left Navigation Sidebar -->
+        <aside id="appSidebar" class="app-sidebar">
+            <div class="sidebar-section">
+                <div class="sidebar-title">STANDALONE VIEWS</div>
+                <nav class="sidebar-nav">
+                    <a href="#overview" class="sidebar-link active" data-view="overview">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+                        <span>Overview</span>
+                    </a>
+                    <a href="#ask" class="sidebar-link" data-view="ask">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                        <span>Ask Copilot</span>
+                    </a>
+                    <a href="#dependencies" class="sidebar-link" data-view="dependencies">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
+                        <span>Dependencies</span>
+                    </a>
+                    <a href="#impact" class="sidebar-link" data-view="impact">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                        <span>Impact Analysis</span>
+                    </a>
+                    <a href="#graph" class="sidebar-link" data-view="graph">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                        <span>Graph View</span>
+                    </a>
+                    <a href="#history" class="sidebar-link" data-view="history">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="12 8 12 12 14 14"></polyline><path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5"></path></svg>
+                        <span>History Stream</span>
+                    </a>
+                </nav>
+            </div>
+
+            <div class="sidebar-section repo-meta-section">
+                <div class="sidebar-title">ACTIVE REPOSITORY</div>
+                <div class="compact-repo-card">
+                    <div class="repo-name-header">
+                        <span class="repo-icon">◈</span>
+                        <span id="infoProjectName" class="repo-name-text" title="-">-</span>
+                    </div>
+                    <div class="repo-metrics-grid">
+                        <div class="metric-badge" title="Python Files">
+                            <span class="metric-num" id="infoPythonFiles">-</span>
+                            <span class="metric-lbl">Files</span>
+                        </div>
+                        <div class="metric-badge" title="Folders">
+                            <span class="metric-num" id="infoFolders">-</span>
+                            <span class="metric-lbl">Folders</span>
+                        </div>
+                        <div class="metric-badge" title="Functions Analyzed">
+                            <span class="metric-num" id="infoFunctions">-</span>
+                            <span class="metric-lbl">Funcs</span>
+                        </div>
+                        <div class="metric-badge metric-status" title="Engine Status">
+                            <span class="metric-dot">●</span>
+                            <span id="infoStatus" class="metric-lbl text-status">Active</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hidden compatibility section for legacy selector -->
+            <section class="repo-info-card" style="display: none;"></section>
+        </aside>
+
+        <!-- Main Workspace Area containing View Panels -->
+        <main class="app-main">
+
+            <!-- 1. OVERVIEW STANDALONE VIEW -->
+            <div id="viewOverview" class="workspace-view">
+                <section class="repo-summary-banner">
+                    <div class="summary-hero">
+                        <div class="hero-left">
+                            <span class="hero-sub">CODEBASE INTELLIGENCE</span>
+                            <h2 class="hero-title">Copilot Understands This Codebase</h2>
+                            <p class="hero-desc">Dual-mode architecture: Use standalone dashboards for deep exploration or ask questions directly in Copilot with embedded interactive artifacts.</p>
+                        </div>
+                        <div class="hero-stats">
+                            <div class="stat-pill">
+                                <span class="stat-num" id="statFiles">0</span>
+                                <span class="stat-lbl">Files</span>
+                            </div>
+                            <div class="stat-pill">
+                                <span class="stat-num" id="statFunctions">0</span>
+                                <span class="stat-lbl">Functions</span>
+                            </div>
+                            <div class="stat-pill">
+                                <span class="stat-num" id="statFolders">0</span>
+                                <span class="stat-lbl">Folders</span>
+                            </div>
+                            <div class="stat-pill stat-active">
+                                <span class="stat-num">100%</span>
+                                <span class="stat-lbl">AST Indexed</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="overview-grid">
+                    <div class="overview-card" data-view="ask" style="cursor: pointer;">
+                        <div class="card-icon cyan">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                        </div>
+                        <h3>Ask Copilot Chat</h3>
+                        <p>Ask technical questions, inspect functions, view side-by-side split pane artifacts, and analyze repository architecture.</p>
+                        <button class="overview-action-btn" data-view="ask">Open Chat View →</button>
+                    </div>
+
+                    <div class="overview-card" data-view="dependencies" style="cursor: pointer;">
+                        <div class="card-icon purple">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
+                        </div>
+                        <h3>Dependency Dashboard</h3>
+                        <p>Standalone function caller inspector with direct callers, reverse callers, and indirect dependency trees.</p>
+                        <button class="overview-action-btn" data-view="dependencies">Open Dependencies →</button>
+                    </div>
+
+                    <div class="overview-card" data-view="impact" style="cursor: pointer;">
+                        <div class="card-icon amber">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                        </div>
+                        <h3>Impact Analysis</h3>
+                        <p>Calculate change risk scores, downstream ripple effect percentages, and affected callers before committing code.</p>
+                        <button class="overview-action-btn" data-view="impact">Open Impact View →</button>
+                    </div>
+
+                    <div class="overview-card" data-view="graph" style="cursor: pointer;">
+                        <div class="card-icon emerald">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                        </div>
+                        <h3>Full Canvas Graph</h3>
+                        <p>Dedicated full-canvas PyVis graph workspace with node search, layout controls, physics toggle, and zoom/pan.</p>
+                        <button class="overview-action-btn" data-view="graph">Open Graph Canvas →</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. ASK COPILOT (CHAT + SIDE CANVAS SPLIT PANE) VIEW -->
+            <div id="viewAskCopilot" class="workspace-view active">
+                <div class="split-pane-layout">
+                    <!-- Left Chat Pane -->
+                    <div class="chat-pane">
+                        <section id="emptyWorkspaceState" class="empty-workspace-state">
+                            <div class="empty-icon-wrapper">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                                    <polyline points="10 9 9 9 8 9"></polyline>
+                                </svg>
+                            </div>
+                            <h3 class="empty-title">Understand Your Codebase</h3>
+                            <p class="empty-subtitle">Ask questions about python functions, callers, architecture, downstream impact, or dependency graphs.</p>
+                        </section>
+
+                        <div id="errorCard" class="error-card" style="display: none;">
+                            <div class="error-content">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                                </svg>
+                                <span><strong>Error:</strong> <span id="errorMessage">An error occurred while processing your request.</span></span>
+                            </div>
+                        </div>
+
+                        <!-- Active Results Display Card -->
+                        <section id="resultsCard" class="results-card" style="display: none;">
+                            <div class="results-header">
+                                <div class="badges-group">
+                                    <span id="queryTypeBadge" class="type-chip">RAG</span>
+                                    <span id="subTypeBadge" class="subtype-chip">RAG</span>
+                                    <span id="riskBadge" class="risk-chip risk-low" style="display: none;">RISK: LOW</span>
+                                    <span id="impactPercBadge" class="impact-perc-chip" style="display: none;">IMPACT: 0%</span>
+                                </div>
+                                <button id="openStandaloneViewBtn" class="graph-action-btn" title="Open in Dedicated View">
+                                    <span>Open in Standalone View ↗</span>
+                                </button>
+                            </div>
+
+                            <div id="answerContent" class="answer-content"></div>
+
+                            <div id="citationsSection" class="citations-section">
+                                <div class="citations-title">Code References &amp; Citations</div>
+                                <div id="citationsGrid" class="citations-grid"></div>
+                            </div>
+
+                            <div id="graphSection" class="graph-section">
+                                <div class="graph-header">
+                                    <div class="graph-title-group">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <circle cx="12" cy="12" r="10"></circle>
+                                            <line x1="2" y1="12" x2="22" y2="12"></line>
+                                        </svg>
+                                        <span class="graph-title">Interactive Graph Artifact</span>
+                                    </div>
+                                    <div class="graph-actions">
+                                        <button id="toggleFullscreenBtn" class="graph-action-btn" title="Toggle Fullscreen Graph View">
+                                            <span id="fullscreenBtnText">Expand</span>
+                                        </button>
+                                        <a id="openGraphBtn" href="#" target="_blank" rel="noopener" class="open-graph-btn">
+                                            New Tab ↗
+                                        </a>
+                                        <button id="navToDedicatedGraphBtn" class="graph-action-btn primary-action">
+                                            Open in Dedicated View →
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="graph-iframe-container" id="graphIframeContainer">
+                                    <iframe id="graphIframe" class="graph-iframe" title="Interactive Graph"></iframe>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Command Bar / Query Input Area -->
+                        <section id="queryCard" class="query-card">
+                            <div class="command-bar-header">
+                                <label for="queryInput" class="query-label">Ask Copilot</label>
+                                <span class="char-count-badge" id="charCountBadge">0 / 2000</span>
+                            </div>
+                            
+                            <div class="query-input-wrapper">
+                                <textarea 
+                                    id="queryInput" 
+                                    class="query-input" 
+                                    placeholder="Ask a question about functions, dependencies, impact analysis, or code architecture..." 
+                                    rows="3"
+                                    maxlength="2000"
+                                ></textarea>
+                                
+                                <div class="query-actions">
+                                    <span class="keyboard-hint">Press <strong>Enter</strong> or <strong>Ctrl+Enter</strong> to send</span>
+                                    <div class="btn-group">
+                                        <button id="clearBtn" class="clear-btn" type="button" title="Clear query text">Clear</button>
+                                        <button id="sendBtn" class="send-btn">
+                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                                            Ask Copilot
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="loaderContainer" class="loader-container" style="display: none;">
+                                <div class="spinner"></div>
+                                <span id="loaderText">Thinking through your codebase...</span>
+                            </div>
+
+                            <div class="suggestions-wrapper">
+                                <span class="suggestions-title">Suggested Questions:</span>
+                                <div class="suggestions-list">
+                                    <button class="suggestion-chip" data-query="Give me an overview of this project.">Give me an overview of this project.</button>
+                                    <button class="suggestion-chip" data-query="Show the repository structure.">Show the repository structure.</button>
+                                    <button class="suggestion-chip" data-query="How many functions are in the repository?">How many functions are in the repository?</button>
+                                    <button class="suggestion-chip" data-query="Show the dependency graph.">Show the dependency graph.</button>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <!-- Right Side-Canvas Drawer (Contextual Inspector) -->
+                    <aside id="sideCanvasDrawer" class="side-canvas-drawer">
+                        <div class="drawer-header">
+                            <div class="drawer-title">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon></svg>
+                                <span>Contextual Inspector</span>
+                            </div>
+                            <button id="toggleDrawerBtn" class="drawer-close-btn" title="Toggle Side Inspector">✕</button>
+                        </div>
+                        <div class="drawer-body">
+                            <div id="drawerMiniGraphWrapper" class="drawer-section">
+                                <span class="drawer-section-title">Context Visualizer</span>
+                                <div class="mini-graph-box">
+                                    <iframe id="drawerMiniGraphIframe" class="mini-graph-iframe" title="Mini Preview Graph"></iframe>
+                                </div>
+                            </div>
+                            <div class="drawer-section">
+                                <span class="drawer-section-title">Quick Actions</span>
+                                <div class="drawer-actions-group">
+                                    <button id="drawerOpenDedicatedBtn" class="drawer-btn">
+                                        Open Full Standalone View ↗
+                                    </button>
+                                    <button id="drawerAnalyzeDepsBtn" class="drawer-btn secondary">
+                                        Analyze Function Dependencies
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </aside>
+                </div>
+            </div>
+
+            <!-- 3. STANDALONE DEPENDENCIES DASHBOARD VIEW -->
+            <div id="viewDependencies" class="workspace-view">
+                <div class="dashboard-header">
+                    <div class="dash-title-group">
+                        <h2>Function Dependency Inspector</h2>
+                        <p>Explore function call hierarchies, direct callers, and reverse dependency callers.</p>
+                    </div>
+                    <div class="dash-controls">
+                        <input type="text" id="depSearchInput" class="dash-input" placeholder="Enter function name (e.g. clean_text)...">
+                        <button id="depSearchBtn" class="dash-btn">Analyze Callers</button>
+                    </div>
+                </div>
+
+                <div class="dash-results-grid">
+                    <div class="dash-card">
+                        <div class="dash-card-title">Direct Dependencies (Calls)</div>
+                        <div id="depDirectList" class="dash-card-list"><span class="placeholder-text">Submit a query or search a function to view callers</span></div>
+                    </div>
+                    <div class="dash-card">
+                        <div class="dash-card-title">Reverse Callers (Called By)</div>
+                        <div id="depReverseList" class="dash-card-list"><span class="placeholder-text">Submit a query or search a function to view callers</span></div>
+                    </div>
+                    <div class="dash-card">
+                        <div class="dash-card-title">Indirect Dependencies</div>
+                        <div id="depIndirectList" class="dash-card-list"><span class="placeholder-text">Submit a query or search a function to view callers</span></div>
+                    </div>
+                </div>
+
+                <div class="dash-footer-action">
+                    <button id="depGoToGraphBtn" class="dash-action-link">Open Full Interactive Dependency Graph →</button>
+                </div>
+            </div>
+
+            <!-- 4. STANDALONE IMPACT ANALYSIS DASHBOARD VIEW -->
+            <div id="viewImpact" class="workspace-view">
+                <div class="dashboard-header">
+                    <div class="dash-title-group">
+                        <h2>Downstream Impact &amp; Risk Calculator</h2>
+                        <p>Evaluate change risk score, impact percentage, and affected functions across the codebase.</p>
+                    </div>
+                    <div class="dash-controls">
+                        <input type="text" id="impactSearchInput" class="dash-input" placeholder="Enter target function (e.g. clean_text)...">
+                        <button id="impactSearchBtn" class="dash-btn amber">Calculate Risk</button>
+                    </div>
+                </div>
+
+                <div class="impact-metrics-row">
+                    <div class="impact-stat-card">
+                        <span class="stat-title">Target Function</span>
+                        <span id="dashImpactFunc" class="stat-value">-</span>
+                    </div>
+                    <div class="impact-stat-card">
+                        <span class="stat-title">Risk Assessment</span>
+                        <span id="dashImpactRisk" class="stat-value risk-low">LOW</span>
+                    </div>
+                    <div class="impact-stat-card">
+                        <span class="stat-title">Impact Ratio</span>
+                        <span id="dashImpactPerc" class="stat-value">0.00%</span>
+                    </div>
+                </div>
+
+                <div class="dash-card full-width">
+                    <div class="dash-card-title">Downstream Affected Functions</div>
+                    <div id="impactAffectedList" class="dash-card-list"><span class="placeholder-text">Run impact analysis query to inspect affected callers</span></div>
+                </div>
+
+                <div class="dash-footer-action">
+                    <button id="impactGoToGraphBtn" class="dash-action-link">Open Full Interactive Impact Graph →</button>
+                </div>
+            </div>
+
+            <!-- 5. STANDALONE FULL CANVAS GRAPH VIEW -->
+            <div id="viewGraph" class="workspace-view">
+                <div class="graph-standalone-toolbar">
+                    <div class="toolbar-left">
+                        <span class="toolbar-title">Full Canvas Graph Explorer</span>
+                        <select id="standaloneGraphSelect" class="toolbar-select">
+                            <option value="dependency">Dependency Graph</option>
+                            <option value="impact">Impact Graph</option>
+                        </select>
+                    </div>
+                    <div class="toolbar-right">
+                        <button id="refreshGraphBtn" class="dash-btn secondary">Refresh Canvas</button>
+                        <a id="standaloneOpenGraphBtn" href="#" target="_blank" class="dash-action-link">Open New Tab ↗</a>
+                    </div>
+                </div>
+
+                <div id="standaloneGraphContainer" class="standalone-graph-container">
+                    <iframe id="standaloneGraphIframe" class="standalone-graph-iframe" title="Standalone Canvas Graph"></iframe>
+                    
+                    <!-- Sleek Dark-Themed Loading Skeleton Spinner -->
+                    <div id="graphLoadingState" class="graph-overlay-state" style="display: none;">
+                        <div class="graph-spinner"></div>
+                        <div class="graph-state-title">Analyzing codebase and generating graph...</div>
+                        <p class="graph-state-sub">Building AST dependency graph &amp; function relationships</p>
+                    </div>
+
+                    <!-- Centered Empty / Error State Card -->
+                    <div id="graphEmptyState" class="graph-overlay-state" style="display: none;">
+                        <div class="graph-card-icon">
+                            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                <line x1="6" y1="3" x2="6" y2="15"></line>
+                                <circle cx="18" cy="6" r="3"></circle>
+                                <circle cx="6" cy="18" r="3"></circle>
+                                <path d="M18 9a9 9 0 0 1-9 9"></path>
+                            </svg>
+                        </div>
+                        <h3 class="graph-card-title">Graph Indexing Required</h3>
+                        <p class="graph-card-sub">The dependency graph for this repository has not been generated yet or is missing.</p>
+                        <button id="generateGraphBtn" class="graph-cta-btn">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><polyline points="21 3 21 8 16 8"></polyline></svg>
+                            Generate Dependency Graph
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. STANDALONE HISTORY STREAM VIEW -->
+            <div id="viewHistory" class="workspace-view">
+                <section id="historySection" class="history-section">
+                    <div class="history-header">
+                        <div class="history-title-group">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="12 8 12 12 14 14"></polyline><path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5"></path></svg>
+                            <span class="history-title">Session Query Stream</span>
+                        </div>
+                        <span id="historyCountBadge" class="history-count-badge">0 queries</span>
+                    </div>
+                    <div id="historyContainer" class="history-container"></div>
+                </section>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+        <span>AI Software Engineering Copilot &copy; 2026.</span>
+        <span class="footer-dot">•</span>
+        <span>Dual-Mode Architecture</span>
+    </footer>
+
+    <!-- Script -->
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
