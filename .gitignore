@@ -1,25 +1,28 @@
-# Environment
+# Environment variables
 .env
-.env.example
 
-# Python
+# Python cache
 __pycache__/
 *.py[cod]
-*.pyo
 
-# Generated graphs
-graphs/*.html
-
-# Uploaded repositories / generated repo data
-uploaded_repositories/
-
-# Python virtual environment
+# Virtual environments
 venv/
 .venv/
+env/
+
+# Generated repository data
+uploaded_repositories/
+
+# Generated graph files
+graphs/*.html
+
+# Test/cache files
+.pytest_cache/
 
 # IDE
 .vscode/
 .idea/
 
-# Test/cache
-.pytest_cache/
+# OS files
+.DS_Store
+Thumbs.db
