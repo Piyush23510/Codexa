@@ -7,12 +7,47 @@ document.addEventListener("DOMContentLoaded", () => {
     // Global Workspace State
     const state = {
         activeView: "ask",
-        activeRepoId: "default",
+        activeRepoId: null,
         activeGraphUrl: "",
         activeFunctionQuery: "",
         activeImpactData: null,
-        sessionHistory: []
+        sessionHistory: [],
+        isSwitchingRepo: false
     };
+
+    // Helper: Format clean human-readable repository display name
+    function formatCleanRepoName(rawName) {
+        if (!rawName) return "Repository";
+        let str = rawName.toString().trim();
+        // Strip common git branch/extension suffixes
+        str = str.replace(/[-_](main|master)(\.git)?$/i, '');
+        str = str.replace(/\.git$/i, '');
+        // Strip junk project prefixes
+        str = str.replace(/^capstone[-_]project[-_][a-z0-9]+[-_]+/i, '');
+        // Strip random UUID hex suffixes like _3c7c3d
+        str = str.replace(/_[a-f0-9]{6}$/i, '');
+        // Convert hyphens and underscores to spaces
+        str = str.replace(/[-_]+/g, ' ').trim();
+        if (str) {
+            str = str.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        }
+        return str || rawName;
+    }
+
+    // Helper: Trigger Ask Copilot navigation, focus, and prefill
+    function triggerAskCopilotAction(prefillQuery = null) {
+        switchView("ask");
+        if (queryInput) {
+            if (!queryInput.value.trim()) {
+                queryInput.value = prefillQuery || "Give me an overview of this repository and explain where I should start.";
+                updateCharCount();
+            }
+            queryInput.focus();
+            if (typeof queryInput.setSelectionRange === "function") {
+                queryInput.setSelectionRange(queryInput.value.length, queryInput.value.length);
+            }
+        }
+    }
 
     // DOM Elements — Header & Status
     const repoNameBadge = document.getElementById("repoNameBadge");
@@ -141,7 +176,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function onViewActivated(viewName) {
-        if (viewName === "graph") {
+        if (viewName === "overview") {
+            loadRepositoryOverview();
+        } else if (viewName === "graph") {
             loadStandaloneGraph();
         } else if (viewName === "history") {
             renderStandaloneHistory();
@@ -156,7 +193,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (hash) {
             switchView(hash, false);
         } else {
-            switchView("ask", false);
+            switchView("overview", false);
         }
     }
 
@@ -371,14 +408,42 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const data = await response.json();
 
-            if (data.success || data.status === "active") {
-                const projName = data.project_name || "Repository";
+            if (data.status === "unselected" || !data.active_repo_id) {
+                state.activeRepoId = null;
+                if (repoNameBadge) {
+                    repoNameBadge.innerText = "No Repo Loaded";
+                    repoNameBadge.title = "No repository loaded";
+                }
+                if (infoProjectName) {
+                    infoProjectName.innerText = "No Repo Loaded";
+                    infoProjectName.title = "No repository loaded";
+                }
+
+                if (infoPythonFiles) infoPythonFiles.innerText = "0";
+                if (infoFolders) infoFolders.innerText = "0";
+                if (infoFunctions) infoFunctions.innerText = "0";
+                if (infoStatus) infoStatus.innerText = "Unselected";
+                if (engineStatusBadge) engineStatusBadge.innerText = "Select Repo";
+
+                if (statFiles) statFiles.innerText = "0";
+                if (statFunctions) statFunctions.innerText = "0";
+                if (statFolders) statFolders.innerText = "0";
+
+                if (data.repositories) {
+                    renderRepoDropdown(data.repositories, null);
+                }
+            } else if (data.success || data.status === "active") {
+                const rawName = data.project_name || "Repository";
+                const projName = formatCleanRepoName(rawName);
                 if (data.active_repo_id) state.activeRepoId = data.active_repo_id;
 
-                if (repoNameBadge) repoNameBadge.innerText = projName;
+                if (repoNameBadge) {
+                    repoNameBadge.innerText = projName;
+                    repoNameBadge.title = rawName;
+                }
                 if (infoProjectName) {
                     infoProjectName.innerText = projName;
-                    infoProjectName.title = projName;
+                    infoProjectName.title = rawName;
                 }
 
                 const filesCount = data.total_files ?? "-";
@@ -415,9 +480,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function switchRepository(repoId) {
+        if (!repoId || state.isSwitchingRepo) return;
+        state.isSwitchingRepo = true;
+
         try {
-            setLoading(true, "Switching repository context...");
+            const cleanName = formatCleanRepoName(repoId);
+            setLoading(true, `Loading repository '${cleanName}'...`);
             hideError();
+            hideOverviewError();
+
+            if (repoSelect) repoSelect.disabled = true;
             if (resultsCard) resultsCard.style.display = "none";
             if (graphSection) graphSection.style.display = "none";
             if (graphIframe) graphIframe.src = "about:blank";
@@ -431,19 +503,30 @@ document.addEventListener("DOMContentLoaded", () => {
             const data = await response.json();
 
             if (!response.ok || data.success === false) {
-                showError(data.error || "Failed to switch repository.");
-                showToast("Failed to switch repository.", "error");
+                const errMsg = data.error || "Failed to switch repository.";
+                showError(errMsg);
+                showToast(errMsg, "error");
+                showOverviewError(errMsg, () => switchRepository(repoId));
                 return;
             }
 
             if (data.active_repo_id) state.activeRepoId = data.active_repo_id;
 
+            // Clear stale visualization & query state
+            state.activeGraphUrl = "";
+            state.activeFunctionQuery = "";
+            state.activeImpactData = null;
+
             if (data.repository) {
-                const rName = data.repository.name;
-                if (repoNameBadge) repoNameBadge.innerText = rName;
+                const rawName = data.repository.name;
+                const rName = formatCleanRepoName(rawName);
+                if (repoNameBadge) {
+                    repoNameBadge.innerText = rName;
+                    repoNameBadge.title = rawName;
+                }
                 if (infoProjectName) {
                     infoProjectName.innerText = rName;
-                    infoProjectName.title = rName;
+                    infoProjectName.title = rawName;
                 }
                 if (infoPythonFiles) infoPythonFiles.innerText = data.repository.python_files;
                 if (infoFolders) infoFolders.innerText = data.repository.folders;
@@ -465,31 +548,45 @@ document.addEventListener("DOMContentLoaded", () => {
                 renderRepoDropdown(data.repositories, data.active_repo_id || repoId);
             }
 
-            // Refresh graph dashboard if active
-            if (state.activeView === "graph") loadStandaloneGraph();
+            // Automatically load newly selected repo overview and switch view atomically
+            await loadRepositoryOverview(state.activeRepoId, false);
+            switchView("overview");
 
         } catch (err) {
             console.error("Repository Switch Error:", err);
-            showError(`Failed to switch repository: ${err.message}`);
+            const errMsg = `Failed to switch repository: ${err.message}`;
+            showError(errMsg);
             showToast("Repository switch failed.", "error");
+            showOverviewError(errMsg, () => switchRepository(repoId));
         } finally {
+            state.isSwitchingRepo = false;
+            if (repoSelect) repoSelect.disabled = false;
             setLoading(false);
         }
     }
 
     function renderRepoDropdown(repos, activeRepoId) {
-        if (!repoSelect || !repos || !Array.isArray(repos) || repos.length === 0) return;
+        if (!repoSelect || !repos || !Array.isArray(repos)) return;
         repoSelect.innerHTML = "";
+
+        const defaultOpt = document.createElement("option");
+        defaultOpt.value = "";
+        defaultOpt.innerText = "-- Select Repository --";
+        if (!activeRepoId) defaultOpt.selected = true;
+        repoSelect.appendChild(defaultOpt);
+
         repos.forEach(repo => {
             const option = document.createElement("option");
             option.value = repo.id;
-            option.innerText = `${repo.name}${repo.loaded ? " (Loaded)" : ""}`;
-            if (repo.id === activeRepoId || repo.is_active) {
+            const cleanName = formatCleanRepoName(repo.name);
+            option.innerText = `${cleanName}${repo.loaded ? " (Loaded)" : ""}`;
+            option.title = repo.name;
+            if (repo.id === activeRepoId || (activeRepoId && repo.is_active)) {
                 option.selected = true;
             }
             repoSelect.appendChild(option);
         });
-        repoSelect.style.display = repos.length > 1 ? "inline-block" : "none";
+        repoSelect.style.display = repos.length > 0 ? "inline-block" : "none";
     }
 
     async function handleRepoUpload(e) {
@@ -555,11 +652,16 @@ document.addEventListener("DOMContentLoaded", () => {
                 renderRepoDropdown(data.repositories, data.active_repo_id);
             }
 
+            // Auto-load Overview and switch to Overview onboarding screen
+            await loadRepositoryOverview(state.activeRepoId, true);
+            switchView("overview");
+
         } catch (err) {
             console.error("Repository Upload Error:", err);
             showError(`Network / Connection Error during upload: ${err.message}`);
             showToast("Repository upload failed.", "error");
         } finally {
+
             setLoading(false);
             if (repoZipInput) repoZipInput.value = "";
         }
@@ -591,6 +693,12 @@ document.addEventListener("DOMContentLoaded", () => {
             if (graphSection) graphSection.style.display = "none";
 
             const targetRepoId = (repoSelect && repoSelect.value) ? repoSelect.value : state.activeRepoId;
+
+            if (!targetRepoId) {
+                showError("No active repository selected. Please select or upload a repository first.");
+                showToast("Please select or upload a repository first", "warning");
+                return;
+            }
 
             const response = await fetch("/api/query", {
                 method: "POST",
@@ -762,6 +870,301 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================
     // 5. Standalone Dedicated Dashboards Logic
     // ==========================================
+
+    // Overview Dashboard Loader
+    function showOverviewError(message, retryCallback) {
+        const errorState = document.getElementById("overviewErrorState");
+        const errorMsg = document.getElementById("overviewErrorMessage");
+        const retryBtn = document.getElementById("retryOverviewBtn");
+        const ovDashboard = document.getElementById("overviewDashboardContent");
+        const ovUnselectedLanding = document.getElementById("ovUnselectedLanding");
+
+        if (ovDashboard) ovDashboard.style.display = "none";
+        if (ovUnselectedLanding) ovUnselectedLanding.style.display = "none";
+
+        if (errorMsg) errorMsg.innerText = message || "An error occurred while analyzing the repository.";
+        if (errorState) errorState.style.display = "flex";
+
+        if (retryBtn && retryCallback) {
+            retryBtn.onclick = () => {
+                errorState.style.display = "none";
+                retryCallback();
+            };
+        }
+    }
+
+    function hideOverviewError() {
+        const errorState = document.getElementById("overviewErrorState");
+        if (errorState) errorState.style.display = "none";
+    }
+
+    function renderUnselectedOverview(data) {
+        const ovDashboard = document.getElementById("overviewDashboardContent");
+        const ovUnselectedLanding = document.getElementById("ovUnselectedLanding");
+        const ovProjectName = document.getElementById("ovProjectName");
+        const ovRepoPath = document.getElementById("ovRepoPath");
+
+        hideOverviewError();
+        if (ovProjectName) ovProjectName.innerText = "No Repository Selected";
+        if (ovRepoPath) ovRepoPath.innerText = "Choose an available repository or upload a new Python codebase to start.";
+
+        if (ovDashboard) ovDashboard.style.display = "none";
+        if (ovUnselectedLanding) ovUnselectedLanding.style.display = "flex";
+
+        const availableList = document.getElementById("ovAvailableReposList");
+        if (availableList) {
+            const repos = data.repositories || [];
+            availableList.innerHTML = "";
+            if (repos.length === 0) {
+                availableList.innerHTML = `<p class="text-muted" style="font-size: 0.85rem;">No local repositories detected.</p>`;
+            } else {
+                repos.forEach(repo => {
+                    const card = document.createElement("div");
+                    card.className = "unselected-repo-card";
+                    card.innerHTML = `
+                        <div class="unselected-repo-header">
+                            <span class="unselected-repo-icon">📁</span>
+                            <div>
+                                <span class="unselected-repo-name">${escapeHtml(repo.name)}</span>
+                                <span class="unselected-repo-meta">${repo.python_files} Python files · ${repo.folders} folders</span>
+                            </div>
+                        </div>
+                        <button class="btn-select-repo" data-repo-id="${escapeHtml(repo.id)}">
+                            <span>Load & Analyze →</span>
+                        </button>
+                    `;
+                    card.querySelector(".btn-select-repo").addEventListener("click", () => {
+                        switchRepository(repo.id);
+                    });
+                    availableList.appendChild(card);
+                });
+            }
+        }
+
+        const overviewZipInput = document.getElementById("overviewZipInput");
+        if (overviewZipInput && !overviewZipInput.dataset.wired) {
+            overviewZipInput.dataset.wired = "true";
+            overviewZipInput.addEventListener("change", handleRepoUpload);
+        }
+    }
+
+    async function loadRepositoryOverview(repoId = null, forceRefresh = false) {
+        const targetRepoId = repoId || state.activeRepoId;
+        const loadingState = document.getElementById("overviewLoadingState");
+        const ovDashboard = document.getElementById("overviewDashboardContent");
+        const ovUnselectedLanding = document.getElementById("ovUnselectedLanding");
+
+        hideOverviewError();
+
+        if (!targetRepoId) {
+            if (loadingState) loadingState.style.display = "flex";
+            try {
+                const res = await fetch("/api/repository/overview");
+                const data = await res.json();
+                renderUnselectedOverview(data);
+            } catch (err) {
+                renderUnselectedOverview({ repositories: [] });
+            } finally {
+                if (loadingState) loadingState.style.display = "none";
+            }
+            return;
+        }
+
+        if (loadingState) loadingState.style.display = "flex";
+
+        try {
+            const url = `/api/repository/overview?repo_id=${encodeURIComponent(targetRepoId)}${forceRefresh ? '&refresh=true' : ''}`;
+            const res = await fetch(url);
+            const data = await res.json();
+
+            if (!res.ok || !data.success) {
+                const errMsg = data.error || "Failed to load repository overview.";
+                showToast(errMsg, "error");
+                showOverviewError(errMsg, () => loadRepositoryOverview(targetRepoId, forceRefresh));
+                if (loadingState) loadingState.style.display = "none";
+                return;
+            }
+
+            if (data.status === "unselected") {
+                renderUnselectedOverview(data);
+                if (loadingState) loadingState.style.display = "none";
+                return;
+            }
+
+            if (ovUnselectedLanding) ovUnselectedLanding.style.display = "none";
+            if (ovDashboard) ovDashboard.style.display = "grid";
+
+            // Populate Repository Banner
+            const ovProjectName = document.getElementById("ovProjectName");
+            const ovRepoPath = document.getElementById("ovRepoPath");
+            if (ovProjectName) {
+                const rawName = (data.repository && data.repository.name) ? data.repository.name : "Repository Overview";
+                ovProjectName.innerText = formatCleanRepoName(rawName);
+                ovProjectName.title = rawName;
+            }
+            if (ovRepoPath) ovRepoPath.innerText = (data.repository && data.repository.path) ? data.repository.path : "";
+
+            // Populate Summary
+            const ovSummary = document.getElementById("overviewSummaryContent");
+            if (ovSummary) {
+                ovSummary.innerHTML = renderMarkdown(data.summary || "No summary available.");
+            }
+
+            // Populate Statistics
+            const stats = data.statistics || {};
+            if (document.getElementById("ovStatTotalFiles")) document.getElementById("ovStatTotalFiles").innerText = stats.total_files ?? 0;
+            if (document.getElementById("ovStatPyFiles")) document.getElementById("ovStatPyFiles").innerText = stats.total_python_files ?? 0;
+            if (document.getElementById("ovStatClasses")) document.getElementById("ovStatClasses").innerText = stats.total_classes ?? 0;
+            if (document.getElementById("ovStatFunctions")) document.getElementById("ovStatFunctions").innerText = stats.total_functions ?? 0;
+            if (document.getElementById("ovStatMethods")) document.getElementById("ovStatMethods").innerText = stats.total_methods ?? 0;
+            if (document.getElementById("ovStatModules")) document.getElementById("ovStatModules").innerText = stats.total_modules ?? 0;
+            if (document.getElementById("ovStatLocalDeps")) document.getElementById("ovStatLocalDeps").innerText = stats.total_local_dependencies ?? 0;
+
+            // Populate Exploration Path ("Where Should I Start?")
+            const ovPath = document.getElementById("ovExplorationPath");
+            if (ovPath && Array.isArray(data.exploration_path)) {
+                ovPath.innerHTML = "";
+                data.exploration_path.forEach(step => {
+                    const stepCard = document.createElement("div");
+                    stepCard.className = "step-card";
+                    stepCard.innerHTML = `
+                        <div style="display: flex; align-items: center; justify-content: space-between;">
+                            <span class="step-number-badge">${step.step}</span>
+                            <span class="step-role-chip">${escapeHtml(step.role)}</span>
+                        </div>
+                        <span class="step-target">${escapeHtml(step.target)}</span>
+                        <p class="step-reason">${escapeHtml(step.reason)}</p>
+                    `;
+                    ovPath.appendChild(stepCard);
+                });
+            }
+
+            // Populate Suggested Starter Questions
+            const ovQuestions = document.getElementById("ovSuggestedQuestions");
+            if (ovQuestions && Array.isArray(data.suggested_questions)) {
+                ovQuestions.innerHTML = "";
+                data.suggested_questions.forEach(q => {
+                    const pill = document.createElement("button");
+                    pill.className = "suggested-pill-btn";
+                    pill.innerHTML = `<span>💬</span><span>${escapeHtml(q)}</span>`;
+                    pill.addEventListener("click", () => {
+                        triggerAskCopilotAction(q);
+                    });
+                    ovQuestions.appendChild(pill);
+                });
+            }
+
+            // Populate Entry Points
+            const ovEntry = document.getElementById("ovEntryPoints");
+            if (ovEntry && Array.isArray(data.entry_points)) {
+                ovEntry.innerHTML = "";
+                if (data.entry_points.length === 0) {
+                    ovEntry.innerHTML = `<p class="text-muted" style="font-size: 0.85rem;">No explicit entry points detected.</p>`;
+                } else {
+                    data.entry_points.forEach(ep => {
+                        const div = document.createElement("div");
+                        div.className = "entry-item";
+                        div.innerHTML = `<span class="entry-path">${escapeHtml(ep.file)}</span><span class="entry-type">${escapeHtml(ep.type)}</span>`;
+                        ovEntry.appendChild(div);
+                    });
+                }
+            }
+
+            // Populate Directories
+            const ovDirs = document.getElementById("ovDirectories");
+            if (ovDirs && data.structure && Array.isArray(data.structure.important_directories)) {
+                ovDirs.innerHTML = "";
+                if (data.structure.important_directories.length === 0) {
+                    ovDirs.innerHTML = `<p class="text-muted" style="font-size: 0.85rem;">Top-level python modules only.</p>`;
+                } else {
+                    data.structure.important_directories.forEach(d => {
+                        const div = document.createElement("div");
+                        div.className = "directory-item";
+                        div.innerHTML = `<span class="entry-path">${escapeHtml(d.name)}/</span><span class="entry-type">${escapeHtml(d.role)}</span>`;
+                        ovDirs.appendChild(div);
+                    });
+                }
+            }
+
+            // Populate Configuration Files
+            const ovConfigs = document.getElementById("ovConfigs");
+            if (ovConfigs && data.structure && Array.isArray(data.structure.config_files)) {
+                ovConfigs.innerHTML = "";
+                if (data.structure.config_files.length === 0) {
+                    ovConfigs.innerHTML = `<p class="text-muted" style="font-size: 0.85rem;">No standard configuration files detected.</p>`;
+                } else {
+                    data.structure.config_files.forEach(cfg => {
+                        const div = document.createElement("div");
+                        div.className = "config-item";
+                        div.innerHTML = `<span class="entry-path">${escapeHtml(cfg.file)}</span><span class="entry-type">${escapeHtml(cfg.type)}</span>`;
+                        ovConfigs.appendChild(div);
+                    });
+                }
+            }
+
+            // Populate Core Components
+            const ovComps = document.getElementById("ovCoreComponents");
+            if (ovComps && Array.isArray(data.important_components)) {
+                ovComps.innerHTML = "";
+                data.important_components.forEach(c => {
+                    const card = document.createElement("div");
+                    card.className = "comp-card";
+                    const symsHtml = (c.important_symbols || []).map(s => `<span class="sym-tag">${escapeHtml(s.name)} (${s.type})</span>`).join(" ");
+                    card.innerHTML = `
+                        <div class="comp-header">
+                            <span class="comp-path">${escapeHtml(c.file_path)}</span>
+                            <span class="comp-badge">${escapeHtml(c.component_type)}</span>
+                        </div>
+                        <p class="comp-desc">${escapeHtml(c.description)}</p>
+                        ${symsHtml ? `<div class="comp-symbols">${symsHtml}</div>` : ""}
+                    `;
+                    ovComps.appendChild(card);
+                });
+            }
+
+            // Populate Architecture & Dependencies
+            const ovArch = document.getElementById("ovArchitecture");
+            if (ovArch && data.architecture) {
+                ovArch.innerHTML = "";
+                const rels = data.architecture.key_relationships || [];
+                const extDeps = (data.dependencies && data.dependencies.external_dependencies) ? data.dependencies.external_dependencies : [];
+
+                let html = `<div style="display: flex; flex-direction: column; gap: 0.75rem;">`;
+                if (extDeps.length > 0) {
+                    html += `<div><strong style="color: var(--accent-cyan); font-size: 0.88rem;">External Libraries:</strong> ${extDeps.map(d => `<span class="sym-tag">${escapeHtml(d)}</span>`).join(" ")}</div>`;
+                }
+                html += `<div><strong style="color: var(--accent-cyan); font-size: 0.88rem;">Key Module Import Edges:</strong></div>`;
+                if (rels.length === 0) {
+                    html += `<p class="text-muted" style="font-size: 0.85rem;">No cross-module import relationships recorded.</p>`;
+                } else {
+                    rels.forEach(r => {
+                        html += `<div class="arch-rel-item"><code>${escapeHtml(r.from_module)}</code> ➔ <code>${escapeHtml(r.to_module)}</code></div>`;
+                    });
+                }
+                html += `</div>`;
+                ovArch.innerHTML = html;
+            }
+
+            // Wire Ask Copilot CTA buttons
+            const askCopilotBannerBtn = document.getElementById("askCopilotBannerBtn");
+            if (askCopilotBannerBtn) {
+                askCopilotBannerBtn.onclick = () => triggerAskCopilotAction();
+            }
+            const askCopilotSummaryBtn = document.getElementById("askCopilotSummaryBtn");
+            if (askCopilotSummaryBtn) {
+                askCopilotSummaryBtn.onclick = () => triggerAskCopilotAction();
+            }
+
+        } catch (err) {
+            console.error("Overview fetch error:", err);
+            const errMsg = `Failed to load overview data: ${err.message}`;
+            showToast(errMsg, "error");
+            showOverviewError(errMsg, () => loadRepositoryOverview(targetRepoId, forceRefresh));
+        } finally {
+            if (loadingState) loadingState.style.display = "none";
+        }
+    }
+
 
     // A. Standalone Graph View
     async function loadStandaloneGraph() {

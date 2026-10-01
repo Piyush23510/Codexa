@@ -57,6 +57,24 @@ class LLMGenerator:
 
 
 
+    def _resolve_bare_symbol(self, token, functions):
+        if not token:
+            return None
+        clean_token = token.strip("()").strip().lower()
+        if not clean_token:
+            return None
+        # Exact match
+        for fn in functions:
+            if fn.lower() == clean_token:
+                return fn
+        # Leaf name match (e.g. module::parse -> parse)
+        matches = [fn for fn in functions if fn.split("::")[-1].lower() == clean_token]
+        if len(matches) == 1:
+            return matches[0]
+        elif len(matches) > 1:
+            return f"AMBIGUOUS:{clean_token}"
+        return None
+
     # Identify the function explicitly mentioned as being changed
 
     def identify_changed_function( # used for impact analysis
@@ -65,10 +83,17 @@ class LLMGenerator:
         function_names
     ):
         query_lower = query.lower()
-        # Fast deterministic check for known function names in change/impact queries
-        for fname in sorted(function_names, key=len, reverse=True):
-            if fname.lower() in query_lower and any(kw in query_lower for kw in ["change", "modify", "update", "refactor", "delete", "replace", "break", "affect", "impact"]):
-                return fname
+        impact_kws = ["change", "changing", "modify", "modifying", "update", "updating", "refactor", "refactoring", "delete", "deleting", "replace", "replacing", "break", "breaking", "affect", "affecting", "impact", "impacting", "risk"]
+        has_impact = any(kw in query_lower for kw in impact_kws)
+
+        if has_impact:
+            for fname in sorted(function_names, key=len, reverse=True):
+                clean = fname.split("::")[-1]
+                pattern = r'\b' + re.escape(clean.lower()) + r'\b'
+                if re.search(pattern, query_lower):
+                    resolved = self._resolve_bare_symbol(clean, function_names)
+                    if resolved:
+                        return resolved
 
         prompt = f"""
 
@@ -179,6 +204,10 @@ Do not explain your answer.
 
         if raw_text in function_names:
             return raw_text
+
+        resolved = self._resolve_bare_symbol(raw_text, function_names)
+        if resolved:
+            return resolved
 
         for fname in sorted(function_names, key=len, reverse=True):
             if re.search(r'\b' + re.escape(fname) + r'\b', raw_text):
@@ -637,8 +666,13 @@ GRAPH
     def identify_dependency_function(self, query, functions): # Dependency query mein requested function identify karne ke liye
         query_lower = query.lower()
         for fname in sorted(functions, key=len, reverse=True):
-            if fname.lower() in query_lower:
-                return fname
+            clean = fname.split("::")[-1]
+            pattern = r'\b' + re.escape(clean.lower()) + r'\b'
+            if re.search(pattern, query_lower):
+                resolved = self._resolve_bare_symbol(clean, functions)
+                if resolved:
+                    return resolved
+
         prompt = f"""
 Identify the function name mentioned in the user's dependency query.
 
@@ -653,19 +687,19 @@ If no function is mentioned, return NONE.
 """
 
         response = self._completion_with_retry(
-        model=self.model,
-        max_tokens=50,
-        messages=[
-            {
-                "role": "system",
-                "content": "You identify function names from software dependency queries."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
-    )
+            model=self.model,
+            max_tokens=50,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You identify function names from software dependency queries."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
 
         result = response.choices[0].message.content.strip()
 
@@ -674,6 +708,10 @@ If no function is mentioned, return NONE.
 
         if result in functions:
             return result
+
+        resolved = self._resolve_bare_symbol(result, functions)
+        if resolved:
+            return resolved
 
         for fname in sorted(functions, key=len, reverse=True):
             if re.search(r'\b' + re.escape(fname) + r'\b', result):
@@ -880,3 +918,171 @@ WORKFLOW
         if match:
             return match.group(1).upper()
         return "OVERVIEW"
+
+    def generate_deterministic_summary(self, overview_facts: dict) -> str:
+        """
+        Generate a structured, grounded Markdown overview summary deterministically
+        from extracted repository facts without requiring an LLM API call.
+        """
+        repo_info = overview_facts.get("repository", {})
+        stats = overview_facts.get("statistics", {})
+        struct = overview_facts.get("structure", {})
+        entry_points = overview_facts.get("entry_points", [])
+        comps = overview_facts.get("important_components", [])
+        arch = overview_facts.get("architecture", {})
+        deps = overview_facts.get("dependencies", {})
+        path = overview_facts.get("exploration_path", [])
+
+        proj_name = repo_info.get("name", "Project")
+
+        # A. What this repository does
+        section_a = (
+            f"### A. What this repository does\n"
+            f"**{proj_name}** is a Python codebase comprising **{stats.get('total_files', 0)} total files** "
+            f"({stats.get('total_python_files', 0)} Python modules), **{stats.get('total_classes', 0)} classes**, "
+            f"and **{stats.get('total_functions', 0) + stats.get('total_methods', 0)} functions/methods**.\n"
+        )
+        if deps.get("external_dependencies"):
+            ext_str = ", ".join([f"`{d}`" for d in deps["external_dependencies"][:8]])
+            section_a += f"Key external technologies and libraries detected: {ext_str}.\n"
+
+        # B. How the repository is organized
+        dirs_str = ""
+        for d in struct.get("important_directories", []):
+            dirs_str += f"- `{d['name']}/`: {d['role']} ({d.get('python_files_count', 0)} files)\n"
+        if not dirs_str:
+            dirs_str = "The repository consists primarily of top-level Python modules.\n"
+
+        section_b = (
+            f"### B. How the repository is organized\n"
+            f"The codebase separates concerns across key directories and modules:\n"
+            f"{dirs_str}"
+        )
+
+        # C. How the application works
+        ep_str = ", ".join([f"`{ep['file']}`" for ep in entry_points]) if entry_points else "None detected"
+        section_c = (
+            f"### C. How the application works\n"
+            f"Execution begins at entry point(s): {ep_str}. Core processing flows from these entry points "
+            f"into central business modules and services.\n"
+        )
+
+        # D. Core components
+        comps_str = ""
+        for c in comps[:5]:
+            syms = ", ".join([f"`{s['name']}`" for s in c.get("important_symbols", [])[:3]])
+            comps_str += f"- **`{c['file_path']}`** ({c['component_type']}): {c['description']}\n"
+            if syms:
+                comps_str += f"  - Key symbols: {syms}\n"
+        section_d = (
+            f"### D. Core components\n"
+            f"The primary components in this repository include:\n"
+            f"{comps_str}"
+        )
+
+        # E. Data flow
+        section_e = (
+            f"### E. Data flow\n"
+            f"Inputs enter through entry points (`{entry_points[0]['file'] if entry_points else 'main'}`), "
+            f"are processed by business services, and output results to API callers or standard interfaces.\n"
+        )
+
+        # F. Dependencies
+        rel_str = ""
+        for r in arch.get("key_relationships", [])[:6]:
+            rel_str += f"- `{r['from_module']}` → `{r['to_module']}` ({r['type']})\n"
+        if not rel_str:
+            rel_str = "Internal module dependencies are minimal or localized.\n"
+        section_f = (
+            f"### F. Dependencies\n"
+            f"**Internal Module Dependencies:**\n{rel_str}\n"
+        )
+
+        # G. Entry points
+        g_str = ""
+        for ep in entry_points:
+            g_str += f"- **`{ep['file']}`**: {ep['description']}\n"
+        if not g_str:
+            g_str = "No explicit entry points (`if __name__ == '__main__':` or web server instances) were detected.\n"
+        section_g = f"### G. Entry points\n{g_str}"
+
+        # H. Where a new developer should start
+        h_str = ""
+        for step in path:
+            h_str += f"{step['step']}. **`{step['target']}`** ({step['role']}): {step['reason']}\n"
+        section_h = f"### H. Where a new developer should start\n{h_str}"
+
+        return f"{section_a}\n{section_b}\n{section_c}\n{section_d}\n{section_e}\n{section_f}\n{section_g}\n{section_h}"
+
+    def generate_repository_overview(self, overview_facts: dict) -> str:
+        """
+        Generate a detailed natural language repository overview using Groq LLM
+        grounded in deterministic repository facts. Falls back to deterministic summary on failure.
+        """
+        import json
+        facts_summary = json.dumps(overview_facts, indent=2)
+
+        prompt = f"""
+You are an expert AI Software Architect.
+Analyze the following structured repository facts derived strictly from static analysis of the repository:
+
+{facts_summary}
+
+Generate a comprehensive, detailed, and clear repository overview summary for a developer onboarding to this project.
+
+You MUST structure your response into the following exact Markdown headers:
+
+### A. What this repository does
+Explain what problem the project appears to solve, its main purpose, application type, technologies detected, and major capabilities.
+
+### B. How the repository is organized
+Explain the directory structure, important modules, separation of responsibilities, and where core logic lives.
+
+### C. How the application works
+Describe the high-level execution flow starting from entry points based strictly on available evidence.
+
+### D. Core components
+Explain the purpose and relationships of the most important components listed in facts.
+
+### E. Data flow
+Describe input -> processing -> output data flow if supported by evidence. If evidence is insufficient, state: "The repository structure does not provide enough evidence to determine this."
+
+### F. Dependencies
+Explain internal module relationships and key external library dependencies.
+
+### G. Entry points
+Explain where execution begins and why those files/functions appear to be entry points.
+
+### H. Where a new developer should start
+Explain the suggested exploration path through the repository step-by-step.
+
+STRICT ANTI-HALLUCINATION RULES:
+1. Ground every claim strictly in the provided repository facts.
+2. Do NOT invent files, classes, functions, architectures, dependencies, or execution flows not present in facts.
+3. If evidence is insufficient for any claim or section, explicitly state: "The repository structure does not provide enough evidence to determine this."
+"""
+
+        try:
+            response = self._completion_with_retry(
+                model=self.model,
+                max_tokens=800,
+                temperature=0.2,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a grounded AI Software Architecture expert. Rely only on facts."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            )
+            content = response.choices[0].message.content or ""
+            if content.strip():
+                return content
+        except Exception as e:
+            print(f"[LLMGenerator] Overview LLM generation failed ({type(e).__name__}): {e}. Using deterministic fallback.")
+
+        return self.generate_deterministic_summary(overview_facts)
+

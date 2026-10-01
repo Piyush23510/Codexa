@@ -208,3 +208,29 @@ class ASTParser:
             function_name
             for _, _, function_name in visitor.calls
         ]
+
+    def get_symbol_tree(self, repo_root=None, symbol_table=None):
+        """
+        Phase 4B: Extract a hierarchical SymbolTable for this file using FQSNs.
+
+        Args:
+            repo_root: Path to repository root. If None, defaults to parent of file_path.
+            symbol_table: Optional existing SymbolTable to populate into.
+
+        Returns:
+            Populated SymbolTable containing all hierarchical symbols for this file.
+        """
+        from parser.hierarchical_visitor import HierarchicalASTVisitor
+        from parser.symbol_table import SymbolTable
+
+        root = Path(repo_root) if repo_root else self.file_path.parent
+        st = symbol_table if symbol_table is not None else SymbolTable()
+
+        visitor = HierarchicalASTVisitor(
+            file_path=self.file_path,
+            repo_root=root,
+            source_lines=self.source_lines,
+            symbol_table=st,
+        )
+        visitor.visit(self.tree)
+        return visitor.symbol_table

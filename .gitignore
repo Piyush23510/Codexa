@@ -1,2 +1,25 @@
+# Environment
 .env
 .env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Generated graphs
+graphs/*.html
+
+# Uploaded repositories / generated repo data
+uploaded_repositories/
+
+# Python virtual environment
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Test/cache
+.pytest_cache/

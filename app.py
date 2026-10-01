@@ -19,6 +19,7 @@ from rag.hybrid_retriever import HybridRetriever
 from rag.reranker import Reranker
 from rag.llm_generator import LLMGenerator
 from rag.citation_generator import CitationGenerator
+from rag.overview_service import OverviewService
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB upload limit
@@ -43,6 +44,29 @@ def _get_effective_root(container_dir: Path) -> Path:
     if len(top_dirs) == 1 and len(top_py) == 0:
         return top_dirs[0]
     return container_dir
+
+
+def clean_repo_display_name(raw_name):
+    """
+    Format a clean, human-readable repository display name.
+    Example: 'Capstone-Project-I---Mutual-Fund-Analytics-main' -> 'Mutual Fund Analytics'
+    """
+    if not raw_name:
+        return "Repository"
+    import re
+    name = str(raw_name).strip()
+    # Strip common git/branch suffixes
+    name = re.sub(r'[-_](main|master)(\.git)?$', '', name, flags=re.IGNORECASE)
+    name = re.sub(r'\.git$', '', name, flags=re.IGNORECASE)
+    # Strip junk prefixes (e.g. Capstone-Project-I---)
+    name = re.sub(r'^capstone[-_]project[-_][a-z0-9]+[-_]+', '', name, flags=re.IGNORECASE)
+    # Strip trailing random UUID hex hashes (e.g. _3c7c3d)
+    name = re.sub(r'_[a-f0-9]{6}$', '', name)
+    # Replace dashes/underscores with spaces
+    name = re.sub(r'[-_]+', ' ', name).strip()
+    if name:
+        name = " ".join([word.capitalize() for word in name.split()])
+    return name or str(raw_name)
 
 
 def clean_file_path(raw_path, repo_path=None):
@@ -178,6 +202,15 @@ class CopilotEngine:
             self.reverse_dependencies
         )
 
+        # 6. Repository Overview Service
+        self.overview_service = OverviewService(
+            self.repo_path,
+            dependency_analyzer=self.analyzer,
+            files=self.files,
+            repo_id=self.repo_id
+        )
+        self._cached_overview = None
+
     def retrieve_and_rerank(self, query: str, top_k_hybrid=20, top_k_rerank=3):
         query_embedding = self.embedding_generator.generate_embedding(query)
         hybrid_results = self.hybrid_retriever.search(query, query_embedding, k=top_k_hybrid)
@@ -189,6 +222,38 @@ class CopilotEngine:
         for result in final_results:
             context += result["text"] + "\n\n"
         return context
+
+    def get_repository_overview(self, force_refresh: bool = False):
+        if self._cached_overview and not force_refresh:
+            return self._cached_overview
+
+        facts = self.overview_service.collect_facts()
+
+        if self.llm:
+            try:
+                summary_md = self.llm.generate_repository_overview(facts)
+            except Exception as e:
+                print(f"[CopilotEngine] LLM overview generation error: {e}")
+                summary_md = self.llm.generate_deterministic_summary(facts)
+        else:
+            summary_md = self.overview_service.get_deterministic_summary(facts) if hasattr(self.overview_service, "get_deterministic_summary") else ""
+
+        overview_data = {
+            "success": True,
+            "repository": facts["repository"],
+            "statistics": facts["statistics"],
+            "structure": facts["structure"],
+            "entry_points": facts["entry_points"],
+            "important_components": facts["important_components"],
+            "architecture": facts["architecture"],
+            "dependencies": facts["dependencies"],
+            "summary": summary_md,
+            "exploration_path": facts["exploration_path"],
+            "suggested_questions": facts["suggested_questions"]
+        }
+
+        self._cached_overview = overview_data
+        return overview_data
 
     # ------------------------------------------------------------------------
     # Handlers preserving exact core business logic
@@ -231,17 +296,20 @@ class CopilotEngine:
         }
 
     def handle_repository_overview(self):
-        answer = (
-            f"### Repository Overview\n"
-            f"- **Project Name:** {self.summary['project_name']}\n"
-            f"- **Total Python Files:** {self.summary['total_python_files']}\n"
-            f"- **Total Folders:** {self.summary['total_folders']}\n"
-            f"- **Total Functions:** {len(self.dependencies)}"
-        )
+        overview_data = self.get_repository_overview()
+        summary_text = overview_data.get("summary", "")
+        if not summary_text:
+            summary_text = (
+                f"### Repository Overview\n"
+                f"- **Project Name:** {self.summary['project_name']}\n"
+                f"- **Total Python Files:** {self.summary['total_python_files']}\n"
+                f"- **Total Folders:** {self.summary['total_folders']}\n"
+                f"- **Total Functions:** {len(self.dependencies)}"
+            )
         return {
             "query_type": "REPOSITORY",
             "sub_type": "OVERVIEW",
-            "answer": answer,
+            "answer": summary_text,
             "citations": []
         }
 
@@ -301,6 +369,17 @@ class CopilotEngine:
                 "citations": []
             }
 
+        if function_name and function_name.startswith("AMBIGUOUS:"):
+            symbol_name = function_name.split(":", 1)[1]
+            candidates = [f for f in self.dependencies.keys() if f.endswith(f"::{symbol_name}") or f == symbol_name]
+            cand_str = "\n".join([f"- `{c}`" for c in candidates])
+            return {
+                "query_type": "DEPENDENCY",
+                "sub_type": dependency_type,
+                "answer": f"Multiple symbols named `{symbol_name}` exist in the repository. Please specify which fully qualified symbol you want to analyze:\n{cand_str}",
+                "citations": []
+            }
+
         citations = []
         if function_name:
             details = self.analyzer.get_function_details(function_name)
@@ -315,28 +394,37 @@ class CopilotEngine:
 
         if dependency_type == "DIRECT":
             calls = self.dependencies.get(function_name, [])
-            calls_formatted = "\n".join([f"- `{c}`" for c in calls]) if calls else "None"
-            answer = (
-                f"### Direct Dependencies for `{function_name}`\n"
-                f"Functions called directly by `{function_name}`:\n{calls_formatted}"
-            )
+            if calls:
+                calls_formatted = "\n".join([f"- `{c}`" for c in calls])
+                answer = (
+                    f"### Direct Dependencies for `{function_name}`\n"
+                    f"Functions called directly by `{function_name}`:\n{calls_formatted}"
+                )
+            else:
+                answer = f"Function '{function_name}' has no outgoing function calls."
 
         elif dependency_type == "REVERSE":
             callers = self.reverse_dependencies.get(function_name, [])
-            callers_formatted = "\n".join([f"- `{c}`" for c in callers]) if callers else "None"
-            answer = (
-                f"### Reverse Dependencies for `{function_name}`\n"
-                f"Functions that call `{function_name}`:\n{callers_formatted}"
-            )
+            if callers:
+                callers_formatted = "\n".join([f"- `{c}`" for c in callers])
+                answer = (
+                    f"### Reverse Dependencies for `{function_name}`\n"
+                    f"Functions that call `{function_name}`:\n{callers_formatted}"
+                )
+            else:
+                answer = f"No other functions in the repository call '{function_name}'."
 
         elif dependency_type == "INDIRECT":
             if function_name:
                 indirect = self.analyzer.get_indirect_dependencies(function_name, self.dependencies)
-                indirect_formatted = "\n".join([f"- `{c}`" for c in indirect]) if indirect else "None"
-                answer = (
-                    f"### Indirect Dependencies for `{function_name}`\n"
-                    f"Functions transitively called by `{function_name}`:\n{indirect_formatted}"
-                )
+                if indirect:
+                    indirect_formatted = "\n".join([f"- `{c}`" for c in indirect])
+                    answer = (
+                        f"### Indirect Dependencies for `{function_name}`\n"
+                        f"Functions transitively called by `{function_name}`:\n{indirect_formatted}"
+                    )
+                else:
+                    answer = f"Function '{function_name}' has no indirect outgoing dependencies."
             else:
                 answer_lines = ["### Repository-Wide Indirect Dependencies\n"]
                 found = False
@@ -379,6 +467,17 @@ class CopilotEngine:
                 "query_type": "IMPACT",
                 "sub_type": "IMPACT",
                 "answer": "Could not identify an explicitly changed function in your query.",
+                "citations": []
+            }
+
+        if changed_function.startswith("AMBIGUOUS:"):
+            symbol_name = changed_function.split(":", 1)[1]
+            candidates = [f for f in self.dependencies.keys() if f.endswith(f"::{symbol_name}") or f == symbol_name]
+            cand_str = "\n".join([f"- `{c}`" for c in candidates])
+            return {
+                "query_type": "IMPACT",
+                "sub_type": "IMPACT",
+                "answer": f"Multiple symbols named `{symbol_name}` exist in the repository. Please specify which fully qualified symbol you want to analyze:\n{cand_str}",
                 "citations": []
             }
 
@@ -568,7 +667,8 @@ class CopilotEngine:
 # ----------------------------------------------------------------------------
 DEFAULT_REPO_PATH = BASE_DIR / "AI-Powered-ATS-Resume-Analyzer"
 engine_registry = {}  # Map of repo_id -> CopilotEngine
-active_repo_id = "default"
+active_repo_id = None
+
 
 
 def resolve_repo_path(target_path_or_id):
@@ -642,7 +742,7 @@ def scan_available_repositories():
             fn_cnt = len(engine_registry["default"].dependencies) if is_lod else 0
             repos.append({
                 "id": "default",
-                "name": summary["project_name"],
+                "name": clean_repo_display_name(summary["project_name"]),
                 "path": str(DEFAULT_REPO_PATH),
                 "python_files": summary["total_python_files"],
                 "folders": summary["total_folders"],
@@ -675,9 +775,7 @@ def scan_available_repositories():
                 is_lod = (r_id in engine_registry)
                 fn_cnt = len(engine_registry[r_id].dependencies) if is_lod else 0
 
-                disp_name = summary["project_name"]
-                if disp_name == item.name and "_" in disp_name:
-                    disp_name = disp_name.rsplit("_", 1)[0]
+                disp_name = clean_repo_display_name(summary["project_name"])
 
                 repos.append({
                     "id": r_id,
@@ -710,6 +808,36 @@ def add_cors_headers(response):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/api/repository/overview", methods=["GET", "OPTIONS"])
+def get_repository_overview_endpoint():
+    if request.method == "OPTIONS":
+        return jsonify({"success": True}), 200
+
+    target_repo_id = request.args.get("repo_id") or active_repo_id
+    force_refresh = request.args.get("refresh", "false").lower() == "true"
+
+    if not target_repo_id:
+        return jsonify({
+            "success": True,
+            "status": "unselected",
+            "active_repo_id": None,
+            "message": "No repository selected. Please select or upload a repository to view overview.",
+            "repositories": scan_available_repositories()
+        }), 200
+
+    try:
+        eng = get_engine(target_repo_id)
+        overview = eng.get_repository_overview(force_refresh=force_refresh)
+        return jsonify(overview), 200
+    except FileNotFoundError as fnf:
+        return jsonify({"success": False, "error": str(fnf)}), 404
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to generate repository overview: {str(e)}"}), 500
+
 
 
 @app.route("/api/repositories", methods=["GET", "OPTIONS"])
@@ -772,6 +900,21 @@ def get_status():
     if request.method == "OPTIONS":
         return jsonify({"success": True}), 200
     try:
+        if not active_repo_id:
+            return jsonify({
+                "success": True,
+                "status": "unselected",
+                "active_repo_id": None,
+                "project_name": "No Repository Loaded",
+                "repo_path": "",
+                "total_files": 0,
+                "total_folders": 0,
+                "total_functions": 0,
+                "suggested_questions": [],
+                "repository": None,
+                "repositories": scan_available_repositories()
+            }), 200
+
         eng = get_engine()
         repo_data = {
             "id": eng.repo_id,
@@ -796,6 +939,7 @@ def get_status():
         }), 200
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
 
 
 @app.route("/api/upload_repo", methods=["POST", "OPTIONS"])
@@ -950,6 +1094,9 @@ def query_copilot():
 
     try:
         resolved_target = target_repo_id if target_repo_id else active_repo_id
+        if not resolved_target:
+            return jsonify({"success": False, "error": "No active repository selected. Please select or upload a repository to analyze."}), 400
+
         try:
             eng = get_engine(resolved_target)
         except FileNotFoundError:
@@ -989,8 +1136,21 @@ def serve_api_graph(graph_name):
 
     if not graph_path.exists() and safe_name in ["dependency_graph.html", "impact_graph.html"]:
         prefix = safe_name.rsplit(".", 1)[0]
-        active_graph_name = f"{prefix}_{active_repo_id}.html"
+        active_target = active_repo_id or "default"
+        active_graph_name = f"{prefix}_{active_target}.html"
         active_graph_path = GRAPH_DIR / active_graph_name
+        if not active_graph_path.exists():
+            try:
+                eng = get_engine(active_target)
+                if "dependency" in prefix:
+                    eng.handle_dependency_graph()
+                else:
+                    funcs = list(eng.dependencies.keys())
+                    target_fn = funcs[0] if funcs else "analyze"
+                    eng.handle_impact_query(f"What if I change {target_fn}?")
+            except Exception as e:
+                print(f"[serve_api_graph] Error auto-generating graph: {e}")
+
         if active_graph_path.exists():
             return send_from_directory(GRAPH_DIR, active_graph_name)
 
@@ -1011,6 +1171,6 @@ def serve_graph_legacy(filename):
 
 if __name__ == "__main__":
     print("Starting Flask AI Software Engineering Copilot...")
-    get_engine()
     flask_debug = os.getenv("FLASK_DEBUG", "false").lower() == "true"
     app.run(host="0.0.0.0", port=5000, debug=flask_debug, use_reloader=False)
+

@@ -2,13 +2,28 @@ import networkx as nx
 from pyvis.network import Network
 
 
+def _get_display_label(node_id: str) -> str:
+    """
+    Format node ID for visual presentation in PyVis graphs.
+    If node_id is an FQSN like 'utils.similarity::clean_text' or 'models.user::User.save',
+    returns a clean label like 'clean_text\n(utils.similarity)' or 'User.save'.
+    """
+    if "::" in str(node_id):
+        mod, scope = str(node_id).split("::", 1)
+        if "." in mod:
+            short_mod = mod.split(".")[-1]
+            return f"{scope}\n({short_mod})"
+        return f"{scope}\n({mod})"
+    return str(node_id)
+
+
 def create_dependency_graph(dependencies, filename="dependency_graph.html"):
     G = nx.DiGraph()
 
     for function_name, called_functions in dependencies.items():
         G.add_node(
             function_name,
-            label=function_name,
+            label=_get_display_label(function_name),
             title=f"Caller Function: {function_name}",
             shape="box",
             color={
@@ -26,7 +41,7 @@ def create_dependency_graph(dependencies, filename="dependency_graph.html"):
         for called_function in called_functions:
             G.add_node(
                 called_function,
-                label=called_function,
+                label=_get_display_label(called_function),
                 title=f"Dependency Function: {called_function}",
                 shape="box",
                 color={
@@ -92,7 +107,7 @@ def create_impact_graph(
 
     G.add_node(
         changed_function,
-        label=f"🔥 {changed_function}",
+        label=f"🔥 {_get_display_label(changed_function)}",
         title=f"Changed Function (Root Risk): {changed_function}",
         shape="box",
         color={
@@ -111,7 +126,7 @@ def create_impact_graph(
     for function in direct_impact:
         G.add_node(
             function,
-            label=function,
+            label=_get_display_label(function),
             title=f"Directly Impacted Function: {function}",
             shape="box",
             color={
@@ -140,7 +155,7 @@ def create_impact_graph(
             if caller in indirect_impact:
                 G.add_node(
                     caller,
-                    label=caller,
+                    label=_get_display_label(caller),
                     title=f"Indirectly Impacted Caller: {caller}",
                     shape="box",
                     color={

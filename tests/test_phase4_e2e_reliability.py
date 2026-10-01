@@ -41,6 +41,9 @@ def test_group_1_startup(client):
     print(f"GET /static/script.js -> Status: {res_js.status_code}")
     assert res_js.status_code == 200, "script.js did not return 200"
 
+    # Switch to default repository for test environment
+    client.post("/api/switch_repo", json={"repo_id": "default"})
+
     # API Status
     res_status = client.get("/api/status")
     print(f"GET /api/status -> Status: {res_status.status_code}, Data: {res_status.get_json()}")

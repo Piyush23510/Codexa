@@ -25,6 +25,7 @@ def separator(title):
 
 def test_api_status(client):
     separator("1. TEST /api/status ENDPOINT")
+    client.post("/api/switch_repo", json={"repo_id": "default"})
     res = client.get("/api/status")
     print(f"Status Code: {res.status_code}")
     data = res.get_json()
